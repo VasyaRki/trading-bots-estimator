@@ -2,41 +2,99 @@ import pg from 'pg';
 import Redis from 'ioredis';
 import { config } from './shared/config.js';
 import { init as redisServiceInit } from './infrastructure/cache/redis.js';
-import { init as oiEstimatorInit } from './domain/oi-estimator.js';
-import { init as pumpEstimatorInit } from './domain/pupm-estimator.js';
-import { init as initSymbols } from './infrastructure/repositories/symbols/main.js';
 
-const pool = new pg.Pool(config.pg);
-const symbolsRepo = initSymbols(pool);
+// Import new DDD components
+import { InMemoryMarketDataRepository } from './infrastructure/repositories/InMemoryMarketDataRepository.js';
+import { RedisEventPublisher } from './infrastructure/repositories/RedisEventPublisher.js';
+import { RedisSignalCountRepository } from './infrastructure/repositories/RedisSignalCountRepository.js';
+import { OpenInterestAnalyzer } from './domain/services/OpenInterestAnalyzer.js';
+import { PriceAnalyzer } from './domain/services/PriceAnalyzer.js';
+import { AnalysisConfig } from './domain/value-objects/AnalysisConfig.js';
 
+// Initialize infrastructure
 const redisPublisher = new Redis(config.redis);
 const redisSubscriber = new Redis(config.redis);
 
 const redis = redisServiceInit(redisSubscriber, redisPublisher);
 
-const oiEstimator = oiEstimatorInit(redis);
-const pumpEstimator = pumpEstimatorInit(redis);
+// Initialize repositories and services
+const marketDataRepository = new InMemoryMarketDataRepository();
+const eventPublisher = new RedisEventPublisher(redis);
+const signalCountRepository = new RedisSignalCountRepository(redis);
+const analysisConfig = new AnalysisConfig();
+
+// Initialize domain services
+const oiAnalyzer = new OpenInterestAnalyzer(
+  marketDataRepository,
+  eventPublisher,
+  analysisConfig,
+  signalCountRepository,
+);
+const priceAnalyzer = new PriceAnalyzer(
+  marketDataRepository,
+  eventPublisher,
+  analysisConfig,
+  signalCountRepository,
+);
 
 await redis.subscribe('OI_UPDATE');
 await redis.subscribe('PRICE_UPDATE');
 
-export const symbols = await symbolsRepo.getSymbols();
-
-redisSubscriber.on('message', (channel, message) => {
-  if (channel === 'OI_UPDATE') {
-    const data = JSON.parse(message);
-    for (const { provider, symbol, openInterest, timestamp } of data) {
-      oiEstimator.addRecord(provider, symbol, Number(openInterest), timestamp);
+redisSubscriber.on('message', async (channel, message) => {
+  try {
+    if (channel === 'OI_UPDATE') {
+      const messages = JSON.parse(message);
+      const dataArray = Array.isArray(messages) ? messages : [messages];
+      console.log(`[OI_UPDATE] Handled ${dataArray.length} oi updates`);
+      for (const msg of dataArray) {
+        const { data } = msg;
+        if (
+          data &&
+          data.symbol &&
+          data.provider &&
+          data.value !== undefined &&
+          data.timestamp
+        ) {
+          await oiAnalyzer.addOpenInterestRecord(
+            data.provider,
+            data.symbol,
+            Number(data.value),
+            data.timestamp,
+          );
+        }
+      }
+    } else if (channel === 'PRICE_UPDATE') {
+      const messages = JSON.parse(message);
+      const dataArray = Array.isArray(messages) ? messages : [messages];
+      console.log(`[PRICE_UPDATE] Handled ${dataArray.length} price updates`);
+      for (const msg of dataArray) {
+        const { data } = msg;
+        if (
+          data &&
+          data.symbol &&
+          data.provider &&
+          data.value !== undefined &&
+          data.timestamp
+        ) {
+          await priceAnalyzer.addPriceRecord(
+            data.provider,
+            data.symbol,
+            Number(data.value),
+            data.timestamp,
+          );
+        }
+      }
     }
-  } else if (channel === 'PRICE_UPDATE') {
-    const data = JSON.parse(message);
-    for (const { provider, symbol, lastPrice, timestamp } of data) {
-      pumpEstimator.addRecord(provider, symbol, Number(lastPrice), timestamp);
-    }
+  } catch (error) {
+    console.error(`Error processing ${channel} message:`, error.message);
   }
 });
 
-setInterval(() => {
-  oiEstimator.estimate();
-  pumpEstimator.estimate();
+setInterval(async () => {
+  try {
+    await oiAnalyzer.analyze();
+    await priceAnalyzer.analyze();
+  } catch (error) {
+    console.error('Error during analysis:', error);
+  }
 }, 1000);
