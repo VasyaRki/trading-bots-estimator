@@ -76,6 +76,11 @@ export class OpenInterestAnalyzer {
         provider,
         'oi',
       );
+    if (
+      signalsCountPerDay &&
+      signalsCountPerDay > this.config.limitOiSignalsPerDay
+    )
+      return;
     const event = new OpenInterestThresholdExceeded(
       symbol,
       provider,

@@ -2,6 +2,7 @@ export class AnalysisConfig {
   constructor({
     oiThreshold = 3,
     priceThreshold = 10,
+    limitOiSignalsPerDay = 5,
     timeWindow = 20 * 60 * 1000,
     cooldownPeriod = 20 * 60 * 1000,
     dataRetentionPeriod = 60 * 60 * 1000,
@@ -11,6 +12,7 @@ export class AnalysisConfig {
     this.timeWindow = Number(timeWindow);
     this.cooldownPeriod = Number(cooldownPeriod);
     this.dataRetentionPeriod = Number(dataRetentionPeriod);
+    this.limitOiSignalsPerDay = Number(limitOiSignalsPerDay);
 
     this.validate();
   }
