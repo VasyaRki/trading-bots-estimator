@@ -55,7 +55,7 @@ export class OpenInterestAnalyzer {
   }
 
   async processOpenInterestUpdate(symbol, history, provider, currentTime) {
-    const cutoffTime = currentTime.subtract(this.config.timeWindow);
+    const cutoffTime = currentTime.subtract(this.config.oiTimeWindow);
     if (!this.canNotifyAgain(provider, symbol, currentTime)) return;
     if (history.length < 2) return;
     const oldest = findLatestRecordBeforeOrAt(history, cutoffTime);
@@ -119,7 +119,7 @@ export class OpenInterestAnalyzer {
     if (!lastNotified) return true;
 
     const cooldownEnd = new Timestamp(lastNotified).add(
-      this.config.cooldownPeriod,
+      this.config.oiCooldownPeriod,
     );
 
     return currentTime.isNewerThan(cooldownEnd);
